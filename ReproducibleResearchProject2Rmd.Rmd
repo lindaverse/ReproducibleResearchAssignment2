@@ -1,0 +1,100 @@
+---
+title: "Health and economic impacts of major storms and weather events (US)"
+author: "Linda Hutcheson"
+date: "September 2014"
+output: html_document
+---
+
+### Synopsis
+
+### Data Processing
+#### Load data 
+If U.S. National Oceanic and Atmospheric Administration's (NOAA) storm data is not in current working directory, download and unzip the data; then load into R.
+```{r, cache=T}
+library(data.table)
+library(R.utils)
+
+if (!("NOAAStormData.csv" %in% dir())) {
+    download.file("http://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2",
+                  "NOAAStormData.csv.bz2")
+    bunzip2("NOAAStormData.csv.bz2", 
+            "NOAAStormData.csv")
+}
+
+stormData <- data.table(read.csv("NOAAStormData.csv", header=T))
+stormData$BGN_DATE <- as.Date(stormData$BGN_DATE, format="%m/%d/%Y")
+stormDataSince1996 <- stormData[BGN_DATE>=as.Date("1996", format="%Y")]
+
+```
+
+#### Clean data
+A quick look at the data reveals a lack of consistency as to the names assigned to different types of events. For instances, the table shown below contains three entries that relate exclusively to beach erosion: "Beach Erosion", "BEACH EROSION" and "BEACH EROSIN". From the output below, it is also apparent that some enteries are missing (for instance, "?"). The data therefore needs to be cleaned, before it can be analysed.
+
+```{r}
+head(table(stormData$EVTYPE), 20)
+```
+
+```{r, cache=T}
+
+officalCategories <- c("Astronomical Low Tide", "Avalanche", "Blizzard", "Coastal Flood", "Cold/Wind Chill", "Debris Flow", "Dense Fog", "Dense Smoke", "Drought", "Dust Devil", "Dust Storm", "Excessive Heat", "Extreme Cold/Wind Chill", "Flash Flood", "Flood", "Frost/Freeze", "Funnel Cloud", "Freezing Fog", "Hail", "Heat", "Heavy Rain", "Heavy Snow", "High Surf", "High Wind", "Hurricane (Typhoon)", "Ice Storm", "Lake-Effect Snow", "Lakeshore Flood", "Lightning", "Marine Hail", "Marine High Wind", "Marine Strong Wind", "Marine Thunderstorm Wind", "Rip Current", "Seiche", "Sleet", "Storm Surge/Tide", "Strong Wind", "Thunderstorm Wind", "Tornado", "Tropical Depression", "Tropical Storm", "Tsunami", "Volcanic Ash", "Waterspout", "Wildfire", "Winter Storm", "Winter Weather")
+
+bestMatch <- function(event) {
+    eventMatches <- agrep(event, officalCategories, ignore.case=T, value=T)
+    if (length(eventMatches) == 0) {
+        NA
+    }
+    else if (length(eventMatches) == 1) {
+        eventMatches[1]
+    }
+    else {
+        distances <- adist(event, eventMatches)
+        indexMin <- which(distances==min(distances), arr.ind=T)
+        eventMatches[indexMin][1]
+    }
+}
+
+stormDataSince1996[, EVTYPE:=gsub("TSTM", "Thunderstorm", EVTYPE, ignore.case=T)]
+stormDataSince1996[, EVTYPE:=gsub("WILD/FOREST FIRE", "Wildfire", EVTYPE, ignore.case=T)]
+stormDataSince1996 <- stormDataSince1996[grep("summary", EVTYPE, ignore.case=T, invert=T)]
+ 
+stormDataSince1996[,cleanEvent:=sapply(EVTYPE, bestMatch)]
+withFatalityOrInjury <- stormDataSince1996[FATALITIES > 0 | INJURIES > 0,]
+```
+
+
+
+### Results
+####Health
+This subsection addresses the following question: Across the United States, which types of events are most harmful with respect to **population health**?
+
+```{r, fig.height=10, fig.width=9}
+library(data.table)
+library(ggplot2)
+library(gridExtra)
+
+eventHealthImpacts <- withFatalityOrInjury[, lapply(.SD, sum), by=cleanEvent, .SDcols=c(23,24)]
+
+fatalities <- ggplot(data=eventHealthImpacts,
+                     aes(x=reorder(cleanEvent, -FATALITIES),
+                         y=as.numeric(FATALITIES))) +
+                     theme_bw() +
+                     geom_bar(stat="identity", fill="forestgreen") +
+                     coord_flip() +
+                     ggtitle("Fatalities") +
+                     xlab("") +
+                     ylab("Number of Fatalities")
+
+injuries <- ggplot(data=eventHealthImpacts,
+                   aes(x=reorder(cleanEvent, -INJURIES),
+                   y=as.numeric(INJURIES))) +
+                   theme_bw() +
+                   geom_bar(stat="identity", fill="forestgreen") +
+                   coord_flip() +
+                   ggtitle("Injuries") +
+                   xlab("") +
+                   ylab("Number of Injuries")
+
+grid.arrange(fatalities, injuries, ncol=1)
+
+```
+
