@@ -1,19 +1,33 @@
 ---
-title: "Health and economic impacts of major storms and weather events (US)"
+title: "Health and economic impacts of major US storms and weather events (1996-2011)"
 author: "Linda Hutcheson"
 date: "September 2014"
 output: html_document
 ---
 
 ### Synopsis
+This report contains analysis of the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. It addresses two questions:
+
+1. Across the United States, which types of events are most harmful with respect to population health?
+2. Across the United States, which types of events have the greatest economic consequences?
+
+It does this by performing basic analysis on data relating to weather events in the US since 1996. Namely, it determines:
+
+1. The weather event that caused the most **fatalities** and **injuries**
+2. The weather event that caused the most damage, measured in terms of USD, to **property** and **crops**
 
 ### Data Processing
-#### Load data 
-If U.S. National Oceanic and Atmospheric Administration's (NOAA) storm data is not in current working directory, download and unzip the data; then load into R.
-```{r, cache=T}
+#### Load data
+Code to load the required packages:
+```{r, results='hide', message=FALSE}
 library(data.table)
 library(R.utils)
+library(ggplot2)
+library(gridExtra)
+```
 
+If U.S. National Oceanic and Atmospheric Administration's (NOAA) storm data is not in current working directory, the following code will download and unzip the data, then load into R:
+```{r, cache=T}
 if (!("NOAAStormData.csv" %in% dir())) {
     download.file("http://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2",
                   "NOAAStormData.csv.bz2")
@@ -22,22 +36,47 @@ if (!("NOAAStormData.csv" %in% dir())) {
 }
 
 stormData <- data.table(read.csv("NOAAStormData.csv", header=T))
+```
+
+As is explained on the [NOAA website](http://www.ncdc.noaa.gov/stormevents/details.jsp "NOAA Storm Database"), while the database contains data gathered since 1950, over time, changes were made to how data was captured and processed. As such, the database can be devided into three distinct periods:
+
+1. 1950-1954: Only tornado events were recorded.
+2. 1955-1992: Only tornado, thunderstorm wind and hail events were keyed from the paper publications into digital data, and from 1993 to 1995, only tornado, thunderstorm wind and hail events have been extracted from the Unformatted Text Files.
+3. 1996-present: weather events recorded as one of 48 definded categories.
+
+So as not to skew the results, this report includes only data recorded since 1996. 
+
+After transforming BGN_DATE to a date class object, the code shown below subsets the data to the required time period. 
+
+```{r, cache=T}
 stormData$BGN_DATE <- as.Date(stormData$BGN_DATE, format="%m/%d/%Y")
 stormDataSince1996 <- stormData[BGN_DATE>=as.Date("1996", format="%Y")]
-
 ```
 
 #### Clean data
-A quick look at the data reveals a lack of consistency as to the names assigned to different types of events. For instances, the table shown below contains three entries that relate exclusively to beach erosion: "Beach Erosion", "BEACH EROSION" and "BEACH EROSIN". From the output below, it is also apparent that some enteries are missing (for instance, "?"). The data therefore needs to be cleaned, before it can be analysed.
+A quick look at the data reveals a lack of consistency as to the names assigned to different types of events. For instances, the table shown below contains three entries that relate exclusively to beach erosion: "Beach Erosion", "BEACH EROSION" and "BEACH EROSIN". The event types need to be grouped, before the data can be analysed.
 
 ```{r}
-head(table(stormData$EVTYPE), 20)
+head(table(stormDataSince1996$EVTYPE), 20)
 ```
+
+The 48 types of weather events recorded by NOAA since 1996 are outlined in the [National Weather Service Storm Data Documentation](http://www.ncdc.noaa.gov/stormevents/pd01016005curr.pdf "National Weather Service Storm Data Documentation").
 
 ```{r, cache=T}
 
 officalCategories <- c("Astronomical Low Tide", "Avalanche", "Blizzard", "Coastal Flood", "Cold/Wind Chill", "Debris Flow", "Dense Fog", "Dense Smoke", "Drought", "Dust Devil", "Dust Storm", "Excessive Heat", "Extreme Cold/Wind Chill", "Flash Flood", "Flood", "Frost/Freeze", "Funnel Cloud", "Freezing Fog", "Hail", "Heat", "Heavy Rain", "Heavy Snow", "High Surf", "High Wind", "Hurricane (Typhoon)", "Ice Storm", "Lake-Effect Snow", "Lakeshore Flood", "Lightning", "Marine Hail", "Marine High Wind", "Marine Strong Wind", "Marine Thunderstorm Wind", "Rip Current", "Seiche", "Sleet", "Storm Surge/Tide", "Strong Wind", "Thunderstorm Wind", "Tornado", "Tropical Depression", "Tropical Storm", "Tsunami", "Volcanic Ash", "Waterspout", "Wildfire", "Winter Storm", "Winter Weather")
 
+```
+
+Although the NOAA documentation identifies 48 distinct weather events, the inputted events have not been entered consitently, and more than 48 categories are present. 
+
+As its name suggests, the bestMatch function defined below attempts to select a best match from the 48 NOAA event categories. It does this by first identifying all possible matches using agrep, then:
+
+* If no match is found, bestMatch returns NA
+* If one match is found, it returns the "offical name"
+* If more than one match is found, it uses adist to select the most likely match
+
+```{r}
 bestMatch <- function(event) {
     eventMatches <- agrep(event, officalCategories, ignore.case=T, value=T)
     if (length(eventMatches) == 0) {
@@ -53,27 +92,48 @@ bestMatch <- function(event) {
     }
 }
 
+```
+
+bestMatch is not perfect: it does not clean up all event entries. Inconsistent variable names that appear frequently in the data set are altered manually in the code chunk below. Doing this, "TSTM" is replaced with "Thunderstorm" and "WILD/FOREST FIRE" with "Wildfire". The data set also contains numerous "summary" enteries: these are removed as they do not relate to a specific weather event.
+
+In cases where a match cannot be found, bestMatch returns NA. These have been left in the dataset so as not to potentially distort analysis. To reclassify these enteries would be highly time consuming and require greater knownledge of weather events.
+
+```{r, results='hide'}
 stormDataSince1996[, EVTYPE:=gsub("TSTM", "Thunderstorm", EVTYPE, ignore.case=T)]
 stormDataSince1996[, EVTYPE:=gsub("WILD/FOREST FIRE", "Wildfire", EVTYPE, ignore.case=T)]
 stormDataSince1996 <- stormDataSince1996[grep("summary", EVTYPE, ignore.case=T, invert=T)]
- 
+```
+
+A new variable, cleanEvent, is added to the stormDataSince1996 data set. It contains the result of calling bestMatch on the original event type (EVTYPE).
+
+```{r, results='hide'}
 stormDataSince1996[,cleanEvent:=sapply(EVTYPE, bestMatch)]
+```
+
+### Results
+As noted at the outset, this aim of this analysis is to answer two basic questions: 
+
+* Across the United States, which types of events are most harmful with respect to population health?
+* Across the United States, which types of events have the greatest economic consequences?
+
+This section addresses these questions in turn.
+
+####Health Impacts
+In order to avoid having to compute unnecessary  expensive computations, the data is first subseted to include only events that resulted in factalities or injuries.
+
+```{r}
 withFatalityOrInjury <- stormDataSince1996[FATALITIES > 0 | INJURIES > 0,]
 ```
 
+The number of fatalities and injuries are then each grouped by event and summed.
 
+```{r, cache=TRUE}
+eventHealthImpacts <- withFatalityOrInjury[, lapply(.SD, sum), by=cleanEvent, .SDcols=c(23,24)]
+```
 
-### Results
-####Health
-This subsection addresses the following question: Across the United States, which types of events are most harmful with respect to **population health**?
+Two plots are then created and displayed in one panel plot. 
 
 ```{r, fig.height=10, fig.width=9}
-library(data.table)
-library(ggplot2)
-library(gridExtra)
-
-eventHealthImpacts <- withFatalityOrInjury[, lapply(.SD, sum), by=cleanEvent, .SDcols=c(23,24)]
-
 fatalities <- ggplot(data=eventHealthImpacts,
                      aes(x=reorder(cleanEvent, -FATALITIES),
                          y=as.numeric(FATALITIES))) +
@@ -94,7 +154,81 @@ injuries <- ggplot(data=eventHealthImpacts,
                    xlab("") +
                    ylab("Number of Injuries")
 
-grid.arrange(fatalities, injuries, ncol=1)
+grid.arrange(fatalities, injuries, ncol=1, main="Figure 1: Health impact of weather events")
 
 ```
 
+The information in this panel plot provides a basic answer to the question of which types of events are most harmful to population health. Between 1996 and 2011 **Excessive heat** was responsible for the greatest number of **fatalities**: approimately 2000 deaths were caused by this type of event. However, in terms of number of **injuries**, **tornados** were most distructive as they caused almost 20,000 injuries in this time period.
+
+#### Economic Impacts
+The data is again subsetted, this time to include only instances where property or crop damage occured.
+
+```{r}
+withPropertyOrCropDamage <- stormDataSince1996[PROPDMG > 0 | CROPDMG > 0,]
+```
+
+The data contains two columns: the first giving a coefficent and the second an abbreviation for an exponent (e.g "M" for million). 
+
+expandCost is a function that takes in a coefficent and an abbreviation, and multiples the coefficent by the relevant exponent.
+
+```{r}
+expandCost <- function(number, abbreviation) {
+    if (abbreviation == "K"){
+        number * 1000
+    }
+    else if (abbreviation == "M"){
+        number * 1000000
+    }
+    else if (abbreviation == "B"){
+        number * 1000000000
+    }
+    else if (abbreviation == ""){
+        0
+    }
+}
+```
+
+The code chunk bellow uses expandCost to create a numeric representation, first of property damage and second of crop damage.
+
+```{r, results='hide'}
+withPropertyOrCropDamage[,expandedPropertyDamage:=mapply(expandCost, PROPDMG, PROPDMGEXP)]
+withPropertyOrCropDamage[,expandedCropDamage:=mapply(expandCost, CROPDMG, CROPDMGEXP)]
+```
+
+In order to find the total cost of 1) property damage and 2) crop damage, the data is grouped by event and the relevant columns respectively summed.
+
+```{r, cache=TRUE}
+eventEconomicImpacts <- withPropertyOrCropDamage[, lapply(.SD, sum), by=cleanEvent, .SDcols=c(39,40)]
+```
+
+Two plots are again created and displayed in one panel plot. 
+
+Note: The property damage data has been filtered to show only damage of more than 80 million, and similarly only events that caused crop damage of more than 6 million are shown.
+
+```{r, fig.height=10, fig.width=9}
+propertyDamage <- ggplot(data=eventEconomicImpacts[which(expandedPropertyDamage>80000000),],
+                   aes(x=reorder(cleanEvent, -expandedPropertyDamage),
+                   y=expandedPropertyDamage/1000000)) +
+                   theme_bw() +
+                   geom_bar(stat="identity", fill="forestgreen") +
+                   coord_flip() +
+                   ggtitle("Property Damage") +
+                   xlab("") +
+                   ylab("Millions of USD")
+
+
+cropDamage <- ggplot(data=eventEconomicImpacts[which(expandedCropDamage>6000000),],
+                   aes(x=reorder(cleanEvent, -expandedCropDamage),
+                   y=expandedCropDamage/1000000)) +
+                   theme_bw() +
+                   geom_bar(stat="identity", fill="forestgreen") +
+                   coord_flip() +
+                   ggtitle("Crop Damage") +
+                   xlab("") +
+                   ylab("Millions of USD")
+
+grid.arrange(propertyDamage, cropDamage, ncol=1, main="Figure 2: Economic impact of weather events")
+
+```
+
+The pannel plot provides a basic answer to the question regarding which events cause the greatest economic impact. As is evident from the panel plot, **costal floods** caused the greatest damage to **properties** (measured in terms of USD). Alternatively, **drought** caused the most damage to **crops**.
