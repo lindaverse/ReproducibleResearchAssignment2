@@ -6,6 +6,7 @@ output: html_document
 ---
 
 ### Synopsis
+
 This report contains analysis of the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. It addresses two questions:
 
 1. Across the United States, which types of events are most harmful with respect to population health?
